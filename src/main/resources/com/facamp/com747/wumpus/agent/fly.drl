@@ -1,0 +1,481 @@
+package com.facamp.com747.wumpus.agent
+
+import com.facamp.com747.wumpus.agent.TravelPlan
+import com.facamp.com747.wumpus.agent.Agent
+import com.facamp.com747.wumpus.agent.Agent.Level02GoalState
+import com.facamp.com747.wumpus.agent.Dungeon
+import com.facamp.com747.wumpus.agent.Cave
+import com.facamp.com747.wumpus.agent.Pit
+
+import com.facamp.com747.wumpus.agent.Percept
+import com.facamp.com747.wumpus.agent.Move
+import com.facamp.com747.wumpus.agent.Shoot
+import com.facamp.com747.wumpus.agent.State
+import javax.swing.JOptionPane;
+
+
+function boolean adjacent(Dungeon l1, Dungeon l2) {
+	if (l1.x == l2.x)
+		return Math.abs(Math.abs(l1.y - l2.y)-1)<0.001;
+	if (l1.y == l2.y)
+		return Math.abs(Math.abs(l1.x - l2.x)-1)<0.001;
+	return false;
+}
+
+function void step(Agent a) {
+//		a.debugView();
+//		JOptionPane.showConfirmDialog(null, "Press <ENTER> to continue");
+}
+
+rule win_the_game
+	salience 200
+	when
+		$a : Agent(alive)
+		$l : Dungeon(x == $a.x, y == $a.y, gold == State.YES)
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"] = ["+$l.x+","+$l.y+"("+$l.id+" - "+$l.perceptBreeze+")]");
+		Percept p = $a.grab();
+		insert(p);
+		modify($a) {setAlive(false)};
+		modify($a) {setWin(true)};
+		modify($a) {setPoints(p.getPoints())};
+	end;
+					
+//Rules to percept and update the model of the world
+//================================================================================================
+rule percept_breeze
+		salience 100
+	when
+		$a : Agent()
+		$l : Dungeon(x == $a.x, y == $a.y, perceptBreeze == State.UNKNOWN)
+		$p : Percept(t == $a.t)
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"] = ["+$l.x+","+$l.y+"("+$l.id+" - "+$l.perceptBreeze+")]");
+		if ($p.isBreeze()) {
+			modify($l) {setPerceptBreeze(State.YES)};}
+		else {
+			modify($l) {setPerceptBreeze(State.NO)};}
+			
+	end
+
+rule percept_stench
+		salience 100
+	when
+		$a : Agent()
+		$l : Dungeon(x == $a.x, y == $a.y, perceptStench == State.UNKNOWN)
+		$p : Percept(t == $a.t)
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"] = ["+$l.x+","+$l.y+"("+$l.id+")]");
+		if ($p.isStench()) {
+			modify($l) {setPerceptStench(State.YES)}; }
+		else {
+			modify($l) {setPerceptStench(State.NO)}; }
+	end
+
+rule percept_glitter
+		salience 100
+	when
+		$a : Agent()
+		$l : Dungeon(x == $a.x, y == $a.y, perceptGlitter == State.UNKNOWN)
+		$p : Percept(t == $a.t)
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"] = ["+$l.x+","+$l.y+"("+$l.id+")]");
+		if ($p.isGlitter()) {
+			modify($l) {setPerceptGlitter(State.YES)};
+			modify($l) {setGold(State.YES)}; 
+		} else {
+			modify($l) {setPerceptGlitter(State.NO)}; 
+			modify($l) {setGold(State.NO)}; 
+		}
+
+	end
+
+rule mark_visited_and_register_I_survived
+		salience 100
+	when
+		$a : Agent()
+		$l : Dungeon(x == $a.x, y == $a.y, visited == false)
+		$p : Percept(t == $a.t)
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"]");
+		modify($l) {setVisited(true)}
+		if ($a.x==-2 && $a.y==2) {
+			Agent.logger.info("Debug");
+		}
+		if ($p.getState().equals("ACTIVE")) {
+			modify($l) { setWumpus(State.NO) };
+			modify($l) { setPit(State.NO) };
+		}
+	end
+
+// Rules to update my model of the world
+//================================================================================================
+rule realize_that_I_moved_without_bumping
+		salience 110
+	when
+		$a : Agent()
+		$c : Cave()
+		$p : Percept(bump == false)
+		$m : Move(fromT == $a.t, toT == $p.t)
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"]");
+		modify($a) { setT($p.getT()) }
+		modify($a) { setY($m.getToY()) }
+		modify($a) { setX($m.getToX()) }
+
+		Agent.logger.info($a.toString());
+		retract($m);		
+		//Agent.logger.info("Moved:\n{}",$c.toAscii($a.x,$a.y));
+		//JOptionPane.showConfirmDialog(null, "Press <ENTER> to continue");
+	end		
+
+rule lost
+	salience 500
+	when
+		$a : Agent()
+		$p : Percept(t == $a.t, state.equals("LOST"))
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"]");
+		modify($a) {setAlive(false)};
+		retract($p);
+	end;
+
+rule realize_that_I_moved_bumping
+		salience 110
+	when
+		$a : Agent()
+		$p : Percept(bump == true)
+		$m : Move(fromT == $a.t, toT == $p.t)
+		$c : Cave()
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"]");
+		modify($a) { setT($p.getT()) };
+		if ($a.x == $m.getToX()) {
+			if ($a.y < $m.getToY()) {
+				modify($c) {setMaxCoordinateVertical($a.y)};
+			}
+			else {
+				modify($c) {setMinCoordinateVertical($a.y)};
+			}
+		} else {
+			if ($a.x < $m.getToX()) {
+				modify($c) {setMaxCoordinateHorizontal($a.x)};
+			} else {
+				modify($c) {setMinCoordinateHorizontal($a.x)};
+			}
+		}
+		Agent.logger.info($a.toString());
+		//Agent.logger.info("\n{}",$c.toAscii($a.x,$a.y));
+		retract($m);		
+		//JOptionPane.showConfirmDialog(null, "Press <ENTER> to continue");
+	end		
+
+rule removing_invalid_dungeons
+	when
+		$c : Cave()
+		$d : Dungeon(valid, x < $c.minCoordinateHorizontal || x > $c.maxCoordinateHorizontal || y<$c.minCoordinateVertical || y>$c.maxCoordinateVertical)
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"] - {}",$d.toString());
+		modify($d) {setValid(false)};
+		$c.removeDungeon($d);
+		retract($d);	
+	end;	
+
+rule expand_horizons_north
+		salience 90
+	when
+		$c : Cave()
+		$a : Agent(alive, y+1<=$c.maxCoordinateVertical)
+		$d : Dungeon(x == $a.x, y == $a.y)
+		not (exists Dungeon(x == $d.x, y==$d.y+1))
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"]");
+		Dungeon x = new Dungeon($d.x, $d.y+1);
+		$c.addDungeon(x);
+		insert(x);
+	end;
+rule expand_horizons_south
+		salience 90
+	when
+		$c : Cave()
+		$a : Agent(alive, y-1 >= $c.minCoordinateVertical)
+		$d : Dungeon(x == $a.x, y == $a.y)
+		not (exists Dungeon(x == $d.x, y==$d.y-1))
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"]");
+		Dungeon x = new Dungeon($d.x, $d.y-1);
+		$c.addDungeon(x);
+		insert(x);
+	end;
+rule expand_horizons_east
+		salience 90
+	when
+		$c : Cave()
+		$a : Agent(alive, x-1 >= $c.minCoordinateHorizontal)
+		$d : Dungeon(x == $a.x, y == $a.y)
+		not (exists Dungeon(x == $d.x-1, y==$d.y))
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"]");
+		Dungeon x = new Dungeon($d.x-1, $d.y);
+		$c.addDungeon(x);
+		insert(x);
+	end;
+rule expand_horizons_west
+		salience 90
+	when
+		$c : Cave()
+		$a : Agent(alive, x+1 <= $c.maxCoordinateHorizontal)
+		$d : Dungeon(x == $a.x, y == $a.y)
+		not (exists Dungeon(x == $d.x+1, y==$d.y))
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"]");
+		Dungeon x = new Dungeon($d.x+1, $d.y);
+		$c.addDungeon(x);
+  		insert(x);
+	end;
+
+//================================================================================================
+rule wumpus_is_dead 
+		salience 100
+	when
+		$s : Dungeon(perceptStench==State.YES)
+		$r : Dungeon(wumpus == State.DEAD, adjacent($s,$r))
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"] = ["+$s.x+","+$s.y+"("+$s.id+")]->["+$r.x+","+$r.y+"("+$r.id+")]");
+		modify($s) { setPerceptStench(State.NO) };
+	end;
+
+
+//================================================================================================
+rule free_of_wumpus //"~percept_stench(s) & adjacent(s,r) => no_wumpus(r)
+	when
+		$s : Dungeon(perceptStench == State.NO)
+		$r : Dungeon(wumpus == State.UNKNOWN || wumpus == State.MAYBE, adjacent($s,$r))
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"] = ["+$s.x+","+$s.y+"("+$s.id+")]->["+$r.x+","+$r.y+"("+$r.id+")]");
+		modify($r) { setWumpus(State.NO) }
+	end;
+
+
+//================================================================================================
+rule free_of_pit //"~percept_pit(s) & adjacent(s,r) => no_pit(r)"
+	when
+		$s : Dungeon(perceptBreeze == State.NO)
+		$r : Dungeon(pit == State.UNKNOWN || pit == State.MAYBE, adjacent($s,$r))
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"] = ["+$s.x+","+$s.y+"("+$s.id+")]->["+$r.x+","+$r.y+"("+$r.id+")]");
+		modify($r){ setPit(State.NO) }
+	end;
+
+//================================================================================================
+rule maybe_wumpus 
+	when
+		$s : Dungeon(perceptStench == State.YES)
+		$r : Dungeon(wumpus == State.UNKNOWN, adjacent($s,$r))
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"] = ["+$s.x+","+$s.y+" ("+$s.id+","+$s.wumpus+")]->["+$r.x+","+$r.y+"("+$r.id+","+$r.wumpus+")]");
+		modify($r) { setWumpus(State.MAYBE) }
+	end;
+
+
+//================================================================================================
+rule maybe_pit 
+	when
+		$s : Dungeon(perceptBreeze == State.YES)
+		$r : Dungeon(pit == State.UNKNOWN, adjacent($s,$r))
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"] = ["+$s.x+","+$s.y+"("+$s.id+","+$s.pit+")]->["+$r.x+","+$r.y+"("+$r.id+","+$r.pit+")]");
+		modify($r){ setPit(State.MAYBE) }
+	end;
+
+
+
+//================================================================================================
+rule explore_neighborhood_safe_walk
+		salience -10
+	when
+		$s : Agent(alive, state02 == Level02GoalState.EXPLORE_NEIGHBORHOOD)
+		not (exists Move(fromT == $s.t))
+		$l1: Dungeon(x == $s.x, y == $s.y)
+		$l2: Dungeon(pit == State.NO && wumpus == State.NO, adjacent($l1,$l2), !visited)
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"]");
+		step($s);
+		Move m = new Move($s.x,$s.y,$l2.x,$l2.y,$s.t,$s.t+1);
+		Agent.logger.info("Inserting: "+m.toString());
+		insert(m);
+	end;
+
+rule change_state_to_plan_travel
+		salience -10
+	when
+		$s : Agent(alive, state02 == Level02GoalState.EXPLORE_NEIGHBORHOOD)
+		not (exists Move(fromT == $s.t))
+		$l1: Dungeon(x == $s.x, y == $s.y)
+		not (exists $l2 : Dungeon(pit == State.NO && wumpus == State.NO, adjacent($l1,$l2), !visited))
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"]");
+		modify($s) {setState02(Level02GoalState.PLAN_TRAVEL)};
+	end;
+
+//================================================================================================
+rule step_on_travel_to_safe
+		salience -10
+	when
+		$s : Agent(alive)
+		not (exists Move(fromT == $s.t))
+		not (exists Shoot(fromT == $s.t))
+		$tp : TravelPlan(!$tp.isEmpty())
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"] : path now is: {}",$tp.toString());
+		step($s);
+		Dungeon d = $tp.push();
+		retract($tp);
+		insert($tp);
+		if (d.getWumpus()==State.NO) {
+			Move m = new Move($s.x,$s.y,d.x,d.y,$s.t,$s.t+1);		
+			Agent.logger.info("Inserting: "+m.toString());
+			insert(m);
+		} else {
+			Move m = new Move($s.x,$s.y,d.x,d.y,$s.t+1,$s.t+2);
+			Shoot s = new Shoot($s.x,$s.y,d.x,d.y,$s.t,$s.t+1);
+			Agent.logger.info("Inserting: "+m.toString());
+			Agent.logger.info("Inserting: "+s.toString());
+			insert(s);
+			insert(m);
+		}
+	end;
+
+rule change_state_back_to_explore
+		salience -10
+	when
+		$s : Agent(alive, state02 != Level02GoalState.EXPLORE_NEIGHBORHOOD)
+		not (exists Move())
+		$tp : TravelPlan($tp.isEmpty())
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"]");
+		retract($tp);
+		modify($s) {setState02(Level02GoalState.EXPLORE_NEIGHBORHOOD)};
+ 	end;
+
+
+//================================================================================================
+rule plan_travel
+		salience -10
+	when
+		$s : Agent(alive, state02 == Level02GoalState.PLAN_TRAVEL)
+		$c : Cave()
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"]");
+		//First, make plan to visit safe places
+		TravelPlan tp = $c.findNearestUnvisitedDungeon($s.x, $s.y, State.NO, true);
+		if (tp!=null) {
+			insert(tp);
+			modify($s) {setState02(Level02GoalState.TRAVEL_TO_SAFE)};
+			Agent.logger.info("TravelPlan to safe place: "+tp.toString());
+			return;
+		} 
+		//Then, make plan to visit places that might be unsafe
+		tp = $c.findNearestUnvisitedDungeon($s.x, $s.y, State.MAYBE, false);
+		if (tp!=null) {
+			insert(tp);
+			modify($s) {setState02(Level02GoalState.TRAVEL_TO_BEST_WUMPUS)};
+			Agent.logger.info("TravelPlan to nearest maybe_wumpus: "+tp.toString());
+			return;
+		}
+		//Finally, make plan to kill wumpus
+		tp = $c.findNearestUnvisitedDungeon($s.x, $s.y, State.YES, false);
+		if (tp!=null) {
+			insert(tp);
+			modify($s) {setState02(Level02GoalState.TRAVEL_TO_BEST_WUMPUS)};
+			Agent.logger.info("TravelPlan to nearest maybe_wumpus: "+tp.toString());
+			return;
+		}		
+		//Agent.logger.info("Could not plan a safe travel to anywere\n{}",$c.toAscii($s.x,$s.y));
+		
+		//Find the nearest maybe-pit state
+		tp = $c.findNearestMaybePitDungeon($s.x,$s.y);
+		if (tp!=null) {
+			insert(tp);
+			modify($s) {setState02(Level02GoalState.TRAVEL_TO_BEST_WUMPUS)};
+			Agent.logger.info("TravelPlan to nearest maybe_pit: "+tp.toString());
+			return;
+		}
+				
+		//Random walk
+		Direction d = $s.chooseRandomDirection();
+		Agent.logger.info("Random walk: {}",d);
+		Move m = new Move(d,$s.x,$s.y,$s.t);
+		insert(m);
+	end;
+
+
+
+//================================================================================================
+rule realize_shoot_result
+	when
+		$a : Agent(alive)
+		$m : Shoot(fromT == $a.t)
+		$d : Dungeon(x == $m.getToX(), y == $m.getToY())
+		$op: Percept(t == $m.getToT())
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"] to ["+$m.getToX()+","+$m.getToY()+"]");
+		try {
+			retract($m);
+			modify($a) {setT($op.getT())};
+			modify($d) {setWumpus(State.DEAD)};
+			if ($op.isScream()) {
+				Agent.logger.info("KILLED WUMPUS: {}",$d.getWumpus());
+			} else {
+				Agent.logger.info("MISSED WUMPUS: {}",$d.getWumpus());
+			}
+		} catch (Exception ex) {
+			$a.logger.error("ERROR", ex);
+			insert(ex);
+		}	
+	end;	
+
+rule shoot
+		salience -20
+	when
+		$a : Agent(alive)
+		$m : Shoot(fromT == $a.t)
+		$d : Dungeon(x == $m.getToX(), y == $m.getToY())
+		$op: Percept(t == $a.t)
+		$c : Cave()
+	then
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"] to ["+$m.getToX()+","+$m.getToY()+"]");
+		try {
+			retract($op);
+			Percept p = $a.shoot($m.direction);
+			Agent.logger.info("Result="+p.toString());
+			insert(p);
+			
+		} catch (Exception ex) {
+			$a.logger.error("ERROR", ex);
+			insert(ex);
+		}	
+	
+	end;
+	
+rule move_agent
+		salience -20
+	when
+		$a : Agent(alive)
+		$m : Move(fromT == $a.t)
+		$d : Dungeon(x == $m.getToX(), y == $m.getToY())
+		$op: Percept(t == $a.t)
+		$c : Cave()
+	then	
+		Agent.logger.info("Rule fired ["+drools.getRule().getName()+"] to ["+$m.getToX()+","+$m.getToY()+"]");
+		try {
+			retract($op);
+			Percept p = $a.move($m.direction);
+			insert(p);
+		} catch (Exception ex) {
+			$a.logger.error("ERROR", ex);
+			insert(ex);
+		}
+	end
+
+	
